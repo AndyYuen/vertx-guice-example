@@ -1,0 +1,5 @@
+customer.http.port: 8080
+connection_string: mongodb://customer-mongodb:27017
+db_name: customerdb
+username: mongo
+password: mongo

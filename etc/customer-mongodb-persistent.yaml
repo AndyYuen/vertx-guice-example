@@ -1,0 +1,165 @@
+apiVersion: v1
+kind: Template
+labels:
+  app: vertx-customer-mongodb
+metadata:
+  annotations:
+    description: Vertx customer service persistent template for MongoDB
+  name: vertx-customer-mongodb
+objects:
+# Customer Service
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      application: customer-mongodb
+    name: customer-mongodb
+  spec:
+    ports:
+    - name: mongo
+      port: 27017
+      protocol: TCP
+      targetPort: 27017
+    selector:
+      deploymentconfig: customer-mongodb
+    sessionAffinity: None
+    type: ClusterIP
+- apiVersion: v1
+  kind: DeploymentConfig
+  metadata:
+    labels:
+      application: customer-mongodb
+    name: customer-mongodb
+  spec:
+    replicas: 1
+    selector:
+      deploymentconfig: customer-mongodb
+    strategy:
+      recreateParams:
+        post:
+          execNewPod:
+            command:
+              - /bin/sh
+              - -i
+              - -c
+              - sleep 10 && /opt/rh/rh-mongodb32/root/usr/bin/mongo $CUSTOMER_MONGODB_SERVICE_HOST:27017/$MONGODB_DATABASE -u $MONGODB_USER -p $MONGODB_PASSWORD
+                --eval="$MONGODB_INIT"
+            containerName: customer-mongodb
+            env:
+            - name: MONGODB_INIT
+              value: db.customers.insert({"_id":"A01","customerId":"A01","vipStatus":"Diamond",
+                "balance":3499});
+                db.customers.insert({"_id":"A02","customerId":"A02","vipStatus":"Gold",
+                "balance":850});
+          failurePolicy: ignore
+        timeoutSeconds: 600
+      resources: {}
+      type: Recreate
+    template:
+      metadata:
+        labels:
+          application: customer-mongodb
+          deploymentconfig: customer-mongodb
+      spec:
+        containers:
+        - env:
+          - name: KUBERNETES_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: MONGODB_USER
+            value: ${CUSTOMER_DB_USERNAME}
+          - name: MONGODB_PASSWORD
+            value: ${CUSTOMER_DB_PASSWORD}
+          - name: MONGODB_DATABASE
+            value: ${CUSTOMER_DATABASE}
+          - name: MONGODB_ADMIN_PASSWORD
+            value: ${CUSTOMER_DB_PASSWORD}
+          image: mongodb
+          imagePullPolicy: IfNotPresent
+          livenessProbe:
+            failureThreshold: 10
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            successThreshold: 1
+            tcpSocket:
+              port: 27017
+            timeoutSeconds: 1
+          name: customer-mongodb
+          ports:
+          - containerPort: 27017
+            protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+              - /bin/sh
+              - -i
+              - -c
+              - mongo 127.0.0.1:27017/$MONGODB_DATABASE -u $MONGODB_USER -p $MONGODB_PASSWORD
+                --eval="quit()"
+            failureThreshold: 10
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: 500m
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            capabilities: {}
+            privileged: false
+          terminationMessagePath: /dev/termination-log
+          volumeMounts:
+          - mountPath: /var/lib/mongodb/data
+            name: mongodb-data
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+        volumes:
+        - name: mongodb-data
+          persistentVolumeClaim:
+            claimName: mongodb-data-pv
+    test: false
+    triggers:
+    - imageChangeParams:
+        automatic: true
+        containerNames:
+        - customer-mongodb
+        from:
+          kind: ImageStreamTag
+          name: mongodb:3.2
+          namespace: openshift
+      type: ImageChange
+    - type: ConfigChange
+- apiVersion: v1
+  kind: PersistentVolumeClaim
+  metadata:
+    labels:
+      application: customer-mongodb
+    name: mongodb-data-pv
+  spec:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 1Gi
+parameters:
+- description: Customer Service database user name
+  from: user[a-zA-Z0-9]{3}
+  generate: expression
+  name: CUSTOMER_DB_USERNAME
+  required: true
+- description: Customer Service database user password
+  from: '[a-zA-Z0-9]{8}'
+  generate: expression
+  name: CUSTOMER_DB_PASSWORD
+  required: true
+- description: Customer Service database name
+  name: CUSTOMER_DATABASE
+  required: true
+  value: customerdb
